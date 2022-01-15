@@ -1,0 +1,163 @@
+
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+library(scales)
+library(XML)
+library(RJSONIO)
+library(RCurl)
+library(rvest)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(readxl)
+library(rlist)
+library(reshape2)
+library(htmlwidgets)
+library(sjmisc)
+# We manually found the following link via the Web browser's Developer Tools in the Network tab.
+# We found the json files
+
+u = "https://static01.nyt.com/newsgraphics/2020/03/16/coronavirus-maps/a3c88fc852744c0bdb9ff9ee092cc5db785705d6/data/timeseries/en/USA.json"
+
+tt = getURLContent(u, verbose = TRUE, followlocation = TRUE)
+
+library(RJSONIO)
+us = fromJSON(tt)
+
+
+# The URL for the JSON changes each day. So today's URL, we want to find it in the current day's page.
+# We get the top-level page
+
+ny = htmlParse(getURLContent("https://www.nytimes.com/interactive/2020/us/coronavirus-us-cases.html?action=click&module=Top%20Stories&pgtype=Homepage"))
+
+# Then we find the HTML elements that have an immediate child text node that contains the string USA.json.
+js = xpathSApply(ny, "//*[contains(./text(), 'USA.json')]", xmlValue)
+
+#These are <script> elements containing JavaScript, not JSON.
+# But we can find the URL with a regular expression in these
+u = gsub('.*"(https://[^"]+USA.json)".*', "\\1", js)
+u = unique(u)
+# There is only 1 URL repeated multiple times.
+
+# So now we have these
+
+tt = getURLContent(u, verbose = TRUE, followlocation = TRUE)
+library(RJSONIO)
+us = fromJSON(tt)
+
+
+
+##get CA county data
+County = list()
+k = 1
+for (i in 1:length(us$data)){
+  all_data = us$data[[i]]
+  if ((!is.na(all_data$hierarchy[3]))){
+    if (all_data$hierarchy[3] == "USA-06" && all_data$display_name != "Unknown"){
+      County[[k]] = all_data
+      k = k + 1
+    }
+  }
+}
+
+
+## Get CA annd its county DATA
+## Store them in a list 'County'
+CA_data = us$data[[6]]
+County[[k]] = CA_data
+
+## Create lists for name; cases
+Countyname = list()
+cases = list()
+deaths = list()
+Dcases = list()
+Ddeaths = list()
+Alllist = list()
+for (j in 1:length(County)){
+  Countyname[j] = County[[j]]$display_name
+  cases[[j]] = as.vector(County[[j]]$cases)
+  deaths[[j]] = as.vector(County[[j]]$deaths)
+  Dcases[[j]] = as.vector(County[[j]]$cases) - c(0, as.vector(County[[j]]$cases))[1:length(as.vector(County[[j]]$cases))]
+  
+  Ddeaths[[j]] = as.vector(County[[j]]$deaths) - c(0, as.vector(County[[j]]$deaths))[1:length(as.vector(County[[j]]$deaths))]
+}
+#store the cumulative cases as dataframe
+df = as.data.frame(list.cbind(cases))
+colnames(df) = as.vector(Countyname)
+
+#store the cumulative deaths as dataframe
+df1 = as.data.frame(list.cbind(deaths))
+colnames(df1) = as.vector(Countyname)
+
+#store the daily cases as dataframe
+df2 = as.data.frame(list.cbind(Dcases))
+colnames(df2) = as.vector(Countyname)
+
+#store the daily deaths as dataframe
+df3 = as.data.frame(list.cbind(Ddeaths))
+colnames(df3) = as.vector(Countyname)
+
+## get population for counties
+Pop = read_excel("~/Desktop/UCD/Third Year/sta141b/hw5/Book2.xlsx")
+Pop$California = CA_data$population
+Pop = do.call("rbind", replicate(nrow(df2), Pop, simplify = FALSE))
+Pop = as.data.frame(Pop)
+
+
+
+##get the range of date
+timerange = seq(as.Date(CA_data$range[1]), as.Date(CA_data$range[2]), by = "day")
+df$time = timerange
+df1$time = timerange
+df2$time = timerange
+df3$time = timerange
+
+## reshape the data into a form that can be used by ggplot
+finaldata = melt(df2, id.vars='time')
+
+## plot
+k = highlight_key(finaldata, ~variable)
+pl = ggplot(data = k, aes(time, value, col = variable)) + geom_line()
+plty = ggplotly(pl, tooltip = c("variable", "time", "value"))
+graph = highlight(plty, on = "plotly_click", off = "plotly_doubleclick")
+
+saveWidget(graph, "try.html", selfcontained = FALSE)
+
+
+## cat(toJSON(df, container = T))
+
+## create pro_rated values: df4
+pro = list()
+for( i in (1:length(County))){
+  pro[[i]] = round(df2[,i]/Pop[,i]*10000,2)  ##pro_rate
+}
+df4 = as.data.frame(list.cbind(pro))
+colnames(df4) = as.vector(Countyname)
+
+##get the data to add in the tooltip: daily cases; daily deaths; cumulatives; and dates
+tooldata = list()
+for (c in 1 : length(County)){
+tooldata[[c]] = as.vector(paste(df$time, df[,c],df1[,c],df2[,c],df3[,c],df4[,c],sep= ";'           '"))
+}
+t = as.data.frame(tooldata)
+colnames(t) = as.vector(Countyname)
+
+
+# ##get the color with respect to daily cases
+
+Dcolor = list()
+for (m in 1:58){
+  data = rescale(df4[,m], to = c(0,1))
+  data = abs(as.numeric(data))
+  Dcolor[[m]] = rgb(1-data,data,1)
+}
+Dcolor = as.data.frame(list.cbind(Dcolor))
+cat("var CACols =", toJSON(Dcolor), ";", file = "2.js")

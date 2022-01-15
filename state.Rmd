@@ -1,0 +1,23 @@
+---
+title: "state"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r}
+library(maps)
+library(leaflet)
+library(htmlwidgets)
+mapStates = map("county", fill = TRUE, plot = FALSE, regions = "CA")
+p = leaflet(data = mapStates)
+p = addTiles(p)
+w = addPolygons(p, fillColor = topo.colors(10, alpha = NULL), stroke = FALSE,
+                layerId = mapStates$names,
+                label = mapStates$names)
+
+saveWidget(w, "stateMap.html", selfcontained = FALSE)
+
